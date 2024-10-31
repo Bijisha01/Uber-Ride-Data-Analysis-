@@ -1,0 +1,235 @@
+
+---
+title: 'Uber Ride Data Analysis: Exploring Fare Patterns and Pickup Trends'
+author: "Bijisha Shrestha"
+date: "`March-20-2023`"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+# Set global chunk options
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+
+```{r}
+# Install and load necessary packages
+if (!require("geosphere")) install.packages("geosphere")
+if (!require("dplyr")) install.packages("dplyr")
+if (!require("ggplot2")) install.packages("ggplot2")
+if (!require("leaflet")) install.packages("leaflet")
+
+library(geosphere)
+library(dplyr)
+library(ggplot2)
+library(leaflet)
+
+```
+```{r}
+# Load the Uber data
+Uber_data <- read.csv("Uber_data.csv")
+
+# Data cleaning: Remove rows with 0 or NA values in latitude/longitude columns
+cleaned_data <- Uber_data %>%
+  filter(pickup_latitude != 0 & pickup_longitude != 0 & 
+         dropoff_latitude != 0 & dropoff_longitude != 0) %>%
+  na.omit()
+
+# View the first few rows of the cleaned dataset
+head(cleaned_data)
+
+
+
+```
+
+```{r}
+# Convert 'pickup_datetime' to proper datetime format and extract day of the week
+cleaned_data$pickup_datetime <- as.POSIXct(cleaned_data$pickup_datetime, format="%Y-%m-%d %H:%M:%S")
+cleaned_data$day_of_week <- weekdays(cleaned_data$pickup_datetime)
+
+# Extract hour to create time slots (Morning, Afternoon, Evening, Night)
+cleaned_data$hour <- as.numeric(format(cleaned_data$pickup_datetime, "%H"))
+cleaned_data$time_slot <- cut(cleaned_data$hour,
+                              breaks = c(-Inf, 5, 12, 17, 21, Inf),
+                              labels = c("Night", "Morning", "Afternoon", "Evening", "Night"))
+
+# Calculate distance between pickup and dropoff in miles
+# Data Cleaning: Remove Invalid Latitude and Longitude Values
+cleaned_data <- Uber_data %>%
+  # Remove rows with 0 or missing values in lat/long columns
+  filter(pickup_latitude != 0 & pickup_longitude != 0 &
+         dropoff_latitude != 0 & dropoff_longitude != 0) %>%
+  # Filter for valid lat/long ranges
+  filter(pickup_latitude >= -90 & pickup_latitude <= 90,
+         dropoff_latitude >= -90 & dropoff_latitude <= 90,
+         pickup_longitude >= -180 & pickup_longitude <= 180,
+         dropoff_longitude >= -180 & dropoff_longitude <= 180) %>%
+  na.omit()
+
+# View the cleaned data
+head(cleaned_data)
+
+
+
+```
+
+
+```{r}
+# Calculate distance between pickup and dropoff in miles
+cleaned_data$distance_miles <- distHaversine(
+  cbind(cleaned_data$pickup_longitude, cleaned_data$pickup_latitude),
+  cbind(cleaned_data$dropoff_longitude, cleaned_data$dropoff_latitude)
+) / 1609.34  # Convert meters to miles
+
+# Round the distance to one decimal place
+cleaned_data$distance_miles <- round(cleaned_data$distance_miles, 1)
+
+# Limit to trips with distances up to 20 miles
+cleaned_data <- cleaned_data %>%
+  filter(distance_miles <= 20)
+# View the modified data
+head(cleaned_data)
+
+```
+
+
+```{r}
+
+# Summary of the cleaned data
+summary(cleaned_data)
+
+# Shape of the cleaned data
+dim(cleaned_data)
+
+
+```
+
+
+```{r}
+# Scatter plot with linear regression line for Fare vs. Distance
+ggplot(cleaned_data, aes(x = distance_miles, y = fare_amount)) +
+  geom_point(alpha = 0.5, color = "blue") +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "Fare Amount vs Distance Traveled (Up to 20 Miles)", 
+       x = "Distance (miles)", y = "Fare Amount ($)") +
+  theme_minimal()
+
+
+
+```
+
+
+
+```{r}
+
+# Convert 'pickup_datetime' to proper datetime format if not already done
+cleaned_data$pickup_datetime <- as.POSIXct(cleaned_data$pickup_datetime, format="%Y-%m-%d %H:%M:%S")
+
+# Extract the hour from 'pickup_datetime'
+cleaned_data$hour <- as.numeric(format(cleaned_data$pickup_datetime, "%H"))
+
+# Create 'time_slot' column based on the hour of the day
+cleaned_data <- cleaned_data %>%
+  mutate(time_slot = case_when(
+    hour >= 5 & hour < 12 ~ "Morning",
+    hour >= 12 & hour < 17 ~ "Afternoon",
+    hour >= 17 & hour < 21 ~ "Evening",
+    TRUE ~ "Night"
+  ))
+
+# Check the first few rows to confirm 'time_slot' is correctly generated
+head(cleaned_data)
+
+# Summarize total trips and average fare by time slot
+summary_time_slot <- cleaned_data %>%
+  group_by(time_slot) %>%
+  summarise(
+    total_trips = n(),
+    average_fare = mean(fare_amount, na.rm = TRUE)
+  )
+
+# View the summarized data
+print(summary_time_slot)
+
+# Plot total trips per time slot
+ggplot(summary_time_slot, aes(x = time_slot, y = total_trips)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  labs(title = "Total Number of Trips per Time Slot", 
+       x = "Time Slot", y = "Number of Trips") +
+  theme_minimal()
+
+
+
+```
+
+
+
+```{r}
+# Plot average fare per time slot
+ggplot(summary_time_slot, aes(x = time_slot, y = average_fare)) +
+  geom_bar(stat = "identity", fill = "lightgreen") +
+  labs(title = "Average Fare per Time Slot", 
+       x = "Time Slot", y = "Average Fare ($)") +
+  theme_minimal()
+
+
+
+```
+
+
+```{r}
+# Grapg shoeing total number of trips each month to show the demad of Uber ride througout the year 
+# Extract month from pickup_datetime
+cleaned_data$month <- format(cleaned_data$pickup_datetime, "%B")
+
+# Remove NA values from month column
+cleaned_data <- cleaned_data %>%
+  filter(!is.na(month))
+
+# Summarize total trips per month
+summary_month <- cleaned_data %>%
+  group_by(month) %>%
+  summarise(total_trips = n())
+
+# Reorder months correctly (January to December)
+summary_month$month <- factor(summary_month$month, levels = month.name)
+
+# Plot total trips per month
+ggplot(summary_month, aes(x = month, y = total_trips, group = 1)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  geom_line(color = "red", size = 1) +
+  geom_point(color = "red", size = 2) +
+  geom_text(aes(label = total_trips), vjust = -0.5) +
+  labs(title = "Total Number of Trips per Month", 
+       x = "Month", y = "Number of Trips") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+```{r}
+# Create a clustered map of pickup locations using Leaflet
+pickup_cluster_map <- leaflet(cleaned_data) %>%
+  addTiles() %>%
+  addMarkers(
+    lng = ~pickup_longitude, lat = ~pickup_latitude,
+    clusterOptions = markerClusterOptions(),
+    label = ~paste("Pickup at:", pickup_latitude, ",", pickup_longitude),
+    popup = ~paste("Pickup Location:<br>Latitude:", pickup_latitude, 
+                   "<br>Longitude:", pickup_longitude)
+  )
+
+# Display the map
+pickup_cluster_map
+
+
+
+```
+
+
+```
+
+
